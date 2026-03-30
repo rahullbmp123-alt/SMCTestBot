@@ -260,14 +260,15 @@ class BacktestEngine:
                         self.journal.add_action(sig.trade_id, "trailing_sl", new_sl, str(ts))
 
                 # Partial TP — book PARTIAL_TP_PCT of position at TP1 immediately
-                # Skip if lot is too small to split (e.g. 0.01 × 50% = 0.00 lots)
+                # Guard: round(0.01 × 0.5, 2) = 0.01 in Python (float rounding),
+                # so also check partial_lot >= lot_size to avoid using full lot as "half"
                 if not self._partialled and RiskManager.check_partial_tp(
                     sig.entry_price, close, sig.tp1, sig.direction, self._partialled
                 ):
                     self._partialled = True
                     pct = settings.PARTIAL_TP_PCT
                     partial_lot = round(sig.lot_size * pct, 2)
-                    if partial_lot > 0.0:
+                    if partial_lot > 0.0 and partial_lot < sig.lot_size:
                         if sig.direction == "buy":
                             partial_pips = (sig.tp1 - sig.entry_price) / settings.POINT_VALUE
                         else:
@@ -285,7 +286,7 @@ class BacktestEngine:
                             f"{pct:.0%} closed @ {sig.tp1:.5f} P&L=${partial_pnl:+.2f}"
                         )
                     else:
-                        # Lot too small to split — hold full position to TP2
+                        # Lot too small to split (or rounds to full lot) — hold full position to TP2
                         self._remaining_lot_ratio = 1.0
                         self.journal.add_action(sig.trade_id, "partial_tp_skipped", sig.tp1, "lot too small to split")
 
