@@ -202,3 +202,12 @@ MT5_SYMBOL: str = os.getenv("MT5_SYMBOL", SYMBOL)
 MT5_MAGIC: int = int(os.getenv("MT5_MAGIC", "20250101"))
 # How many historical 5m bars to fetch for strategy warmup on startup (~35 days)
 MT5_WARMUP_BARS: int = int(os.getenv("MT5_WARMUP_BARS", "10000"))
+
+# ── MT5 Linux Bridge (mt5linux) ───────────────────────────────────────────────
+# On Ubuntu/Linux, MetaTrader5 does not run natively.  Use mt5linux:
+#   Windows side: pip install mt5linux && python -m mt5linux
+#   Ubuntu side:  pip install mt5linux
+# MT5_HOST = IP of the Windows machine running python -m mt5linux
+# MT5_PORT = port used by the mt5linux server (default 18812)
+MT5_HOST: str = os.getenv("MT5_HOST", "localhost")
+MT5_PORT: int = int(os.getenv("MT5_PORT", "18812"))
