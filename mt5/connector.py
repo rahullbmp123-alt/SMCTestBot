@@ -310,6 +310,9 @@ class MT5Adapter(ExecutionAdapter):
 
         volume = round(pos.volume * partial_pct, 2)
         volume = max(volume, 0.01)  # MT5 minimum lot
+        # Defensive: if rounding pushed volume to full position size, cap it so
+        # MT5 doesn't close more than requested (caller's guard should catch this first)
+        volume = min(volume, pos.volume)
 
         tick = mt5.symbol_info_tick(pos.symbol)
         if pos.type == mt5.POSITION_TYPE_BUY:

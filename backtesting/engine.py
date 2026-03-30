@@ -125,6 +125,7 @@ class BacktestEngine:
         self._be_moved: bool = False
         self._current_sl: float = 0.0
         self._remaining_lot_ratio: float = 1.0  # fraction of lot still open after partial TP
+        self._partial_pnl: float = 0.0           # accumulated partial TP P&L for current trade
         self._last_loss_ts: Optional[pd.Timestamp] = None  # cooldown after a loss
         self._mfe_best_price: float = 0.0  # best price reached in trade's favour (for MFE)
         self._last_zone_mid: float = 0.0              # zone midpoint of most recently closed trade
@@ -191,10 +192,13 @@ class BacktestEngine:
             # Record balance AFTER P&L is applied
             closed.account_balance_after = round(self.risk.state.account_balance, 2)
             self.result.total_trades += 1
-            if closed.outcome == "win":
+            # Use total P&L (remaining lot + any partial TP already booked) to determine
+            # the true outcome — avoids counting partial-TP + BE-close as a breakeven/loss
+            total_pnl = pnl + self._partial_pnl
+            if total_pnl > 0:
                 self.result.wins += 1
                 self.result.gross_profit += pnl
-            elif closed.outcome == "loss":
+            elif total_pnl < 0:
                 self.result.losses += 1
                 self.result.gross_loss += pnl
                 self._last_loss_ts = bar_ts  # start cooldown
@@ -209,6 +213,7 @@ class BacktestEngine:
         self._partialled = False
         self._be_moved = False
         self._remaining_lot_ratio = 1.0
+        self._partial_pnl = 0.0
 
     # ── Main loop ──────────────────────────────────────────────────────────
 
@@ -273,6 +278,7 @@ class BacktestEngine:
                         )
                         self.risk.state.update_balance(partial_pnl)
                         self.result.gross_profit += partial_pnl   # partial TP is real profit — count it
+                        self._partial_pnl += partial_pnl           # track for outcome determination
                         self._remaining_lot_ratio = 1.0 - pct
                         self.journal.add_action(
                             sig.trade_id, "partial_tp", sig.tp1,
@@ -304,12 +310,27 @@ class BacktestEngine:
                     self._be_moved = True
                     self.journal.add_action(sig.trade_id, "break_even", self._current_sl, str(ts))
 
-                # SL hit
-                if self._is_sl_hit(lo, hi):
-                    self._close_active(self._current_sl, "sl", ts)
+                # SL / TP2 exit — if both hit on the same bar, use distance from bar open
+                # to decide which fired first (avoids always preferring SL, which
+                # systematically understates win rate on volatile bars).
+                sl_hit  = self._is_sl_hit(lo, hi)
+                tp2_hit = self._is_tp_hit(lo, hi, sig.tp2, sig.direction)
 
-                # TP2 hit
-                elif self._is_tp_hit(lo, hi, sig.tp2, sig.direction):
+                if sl_hit and tp2_hit:
+                    bar_open = float(row["open"])
+                    if sig.direction == "buy":
+                        dist_sl  = bar_open - self._current_sl
+                        dist_tp2 = sig.tp2 - bar_open
+                    else:
+                        dist_sl  = self._current_sl - bar_open
+                        dist_tp2 = bar_open - sig.tp2
+                    if dist_tp2 <= dist_sl:
+                        self._close_active(sig.tp2, "tp2", ts)
+                    else:
+                        self._close_active(self._current_sl, "sl", ts)
+                elif sl_hit:
+                    self._close_active(self._current_sl, "sl", ts)
+                elif tp2_hit:
                     self._close_active(sig.tp2, "tp2", ts)
 
             # ── Look for new signal ────────────────────────────────────────

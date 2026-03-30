@@ -223,6 +223,8 @@ def generate_signal(
 
     # ── ATR ────────────────────────────────────────────────────────────────
     atr = float(calculate_atr(df_5m).iloc[-1])
+    if not np.isfinite(atr) or atr <= 0:
+        return _reject("zero_atr")
 
     # ── SL / TP ────────────────────────────────────────────────────────────
     sl, tp1, tp2 = _build_sl_tp(current_price, direction, zone, atr, settings.MIN_RR)

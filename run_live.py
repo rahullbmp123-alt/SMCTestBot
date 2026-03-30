@@ -162,7 +162,9 @@ class LiveRunner:
         partial_lot = round(sig.lot_size * pct, 2)
         self._partialled = True
 
-        if partial_lot < 0.01:
+        # Guard: can't split if partial lot rounds to zero OR to the full position size
+        # (e.g. 0.01 lot × 50% = 0.005 → rounds to 0.01 = full close in MT5)
+        if partial_lot < 0.01 or partial_lot >= sig.lot_size:
             # Lot too small to split — hold full position
             self._remaining_lot_ratio = 1.0
             self.journal.add_action(
@@ -180,7 +182,12 @@ class LiveRunner:
             log.error(f"Partial TP close failed: {result.error}")
             return
 
-        fill = result.fill_price or sig.tp1
+        if result.fill_price is None:
+            # Position was already closed by MT5 natively on the same bar — skip partial update
+            log.info(f"Partial TP: position {self._active_ticket} already closed by MT5")
+            return
+
+        fill = result.fill_price
         if sig.direction == "buy":
             partial_pips = (fill - sig.entry_price) / settings.POINT_VALUE
         else:
@@ -577,6 +584,26 @@ class LiveRunner:
                     acct = self.adapter.get_account_info()
                     if acct:
                         self.risk.state.account_balance = acct["balance"]
+                    # Re-sync active position — MT5 may have closed it during the outage
+                    if self._active_signal is not None and not self.dry_run:
+                        pos = self.adapter.get_open_position(settings.MT5_SYMBOL)
+                        if pos is None:
+                            log.warning(
+                                f"Position {self._active_ticket} was closed by MT5 during "
+                                "network outage — recording close"
+                            )
+                            ticket_int = int(self._active_ticket)
+                            close_price, close_reason = self.adapter.get_position_close_info(
+                                ticket_int, self._active_signal.timestamp
+                            )
+                            if close_price == 0.0:
+                                bid, ask = self.adapter.get_current_price(settings.MT5_SYMBOL)
+                                close_price = bid if self._active_signal.direction == "buy" else ask
+                                close_reason = "outage_close"
+                            self._close_trade(
+                                close_price, close_reason,
+                                pd.Timestamp.now(tz="UTC"),
+                            )
 
                 ts, row = self._wait_for_new_bar()
                 log.debug(
