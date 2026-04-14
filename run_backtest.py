@@ -5,8 +5,11 @@ Usage:
     python run_backtest.py                          # uses sample generated data
     python run_backtest.py --csv data/my_data.csv   # use your own CSV
     python run_backtest.py --generate               # generate + run on synthetic data
-    python run_backtest.py --live                   # fetch live XAUUSD data then backtest
+    python run_backtest.py --live                   # fetch live XAUUSD data from Yahoo Finance
     python run_backtest.py --live --interval 1h     # fetch 1h bars (up to 2 years)
+    python run_backtest.py --mt5                    # fetch data from MetaTrader 5 (requires MT5)
+    python run_backtest.py --mt5 --bars 20000       # 20 000 x 5m bars from MT5
+    python run_backtest.py --mt5 --days 90          # last 90 calendar days from MT5
     python run_backtest.py --learn                  # run backtest then trigger self-learning
 """
 from __future__ import annotations
@@ -33,14 +36,20 @@ def main() -> None:
     parser = argparse.ArgumentParser(description="SMC Bot Backtester")
     parser.add_argument("--csv", type=str, default=None, help="Path to OHLCV CSV")
     parser.add_argument("--generate", action="store_true", help="Generate synthetic XAUUSD data")
-    parser.add_argument("--bars", type=int, default=5000, help="Bars to generate (default: 5000)")
+    parser.add_argument("--bars", type=int, default=5000, help="Bars to generate / fetch from MT5 (default: 5000)")
     parser.add_argument("--live", action="store_true", help="Fetch live XAUUSD data from Yahoo Finance")
     parser.add_argument(
         "--interval", default="5m",
         choices=["1m", "5m", "15m", "1h", "1d"],
         help="Bar interval for --live fetch (default: 5m)",
     )
-    parser.add_argument("--days", type=int, default=None, help="Lookback days for --live fetch")
+    parser.add_argument("--days", type=int, default=None, help="Lookback days for --live / --mt5 fetch")
+    parser.add_argument("--mt5", action="store_true", help="Fetch historical data from MetaTrader 5")
+    parser.add_argument(
+        "--mt5-timeframe", default="5m",
+        choices=["1m", "5m", "15m", "30m", "1h", "4h", "1d"],
+        help="Bar timeframe for --mt5 fetch (default: 5m)",
+    )
     parser.add_argument("--balance", type=float, default=None, help="Initial balance override")
     parser.add_argument("--learn", action="store_true", help="Run self-learning after backtest")
     parser.add_argument("--no-plot", action="store_true", help="Skip equity curve plot")
@@ -49,9 +58,21 @@ def main() -> None:
     # ── Data ─────────────────────────────────────────────────────────────────
     if args.csv:
         csv_path = args.csv
+    elif args.mt5:
+        from data.fetch_mt5 import fetch_ohlcv_mt5, save_csv as mt5_save_csv
+        sym = getattr(settings, "MT5_SYMBOL", None) or settings.SYMBOL
+        tf = args.mt5_timeframe
+        log.info(
+            f"Fetching {settings.SYMBOL} data from MT5 "
+            f"({'%d days' % args.days if args.days else '%d bars' % args.bars} x {tf})…"
+        )
+        df_mt5 = fetch_ohlcv_mt5(timeframe=tf, n_bars=args.bars, days=args.days)
+        csv_path = f"data/{sym.lower()}_{tf}_mt5.csv"
+        mt5_save_csv(df_mt5, csv_path)
+        log.info(f"MT5 data saved to {csv_path} ({len(df_mt5)} bars)")
     elif args.live:
         from data.fetch_live import fetch_ohlcv, save_csv
-        log.info(f"Fetching live {settings.SYMBOL} data ({args.interval})...")
+        log.info(f"Fetching live {settings.SYMBOL} data ({args.interval}) from Yahoo Finance…")
         df_live = fetch_ohlcv(interval=args.interval, days=args.days)
         csv_path = f"data/{settings.SYMBOL.lower()}_{args.interval}.csv"
         save_csv(df_live, csv_path)
